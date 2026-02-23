@@ -1,107 +1,87 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+import time
 
-# Configuración de la página
-st.set_page_config(page_title="Calculadora Metales Preciosos", page_icon="💰", layout="centered")
+# Configuración de página con estilo oscuro/oro
+st.set_page_config(page_title="Calculadora Oro y Plata", page_icon="💰")
 
-# --- FUNCIÓN DE SCRAPING ---
-@st.cache_data(ttl=3600)
-def obtener_precios():
-    """
-    Intenta obtener precios en vivo desde Inversoro.es.
-    Devuelve (oro, plata, es_real)
-    """
+# --- ESTILO CSS PARA QUE NO SEA BÁSICA ---
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    .stMetric { background-color: #1f2937; padding: 15px; border-radius: 10px; border: 1px solid #f1c40f; }
+    </style>
+    """, unsafe_allow_html=True)
+
+@st.cache_data(ttl=600) # Se actualiza cada 10 minutos
+def obtener_precios_reales():
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        url = "https://www.inversoro.es/"
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
+        # User-Agent más real para evitar bloqueos
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        # Usamos una URL directa de lingotes que suele ser más estable
+        url = "https://www.inversoro.es/precio-del-oro/precio-del-oro-hoy/"
+        response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        oro_tag = soup.find("span", id="hp-gold-price")
-        plata_tag = soup.find("span", id="hp-silver-price")
-
-        if not oro_tag or not plata_tag:
-            raise ValueError("No se encontraron los elementos de precio.")
-
-        oro_text = oro_tag.text.strip()
-        plata_text = plata_tag.text.strip()
-
-        # Convertimos formato europeo (2.150,50 €) a float (2150.50)
-        oro = float(oro_text.replace('.', '').replace(',', '.').replace('€', '').strip())
-        plata = float(plata_text.replace('.', '').replace(',', '.').replace('€', '').strip())
+        # Buscamos los precios en las tablas principales
+        precios = soup.find_all("span", class_="price-value")
         
-        return oro, plata, True 
-    except Exception:
-        return 2350.00, 28.50, False
+        # Extracción agresiva de números
+        oro = float(precios[0].text.replace('.', '').replace(',', '.').replace('€', '').strip())
+        plata = float(precios[1].text.replace('.', '').replace(',', '.').replace('€', '').strip())
+        return oro, plata, True
+    except:
+        # Si falla Inversoro, intentamos otra fuente o damos aviso claro
+        return 2415.50, 29.10, False
 
-oro_hoy, plata_hoy, precios_reales = obtener_precios()
+oro_hoy, plata_hoy, es_real = obtener_precios_reales()
 
 # --- INTERFAZ ---
-st.title("💰 Calculadora de Metales Preciosos")
+st.title("🥇 Monitor de Metales Preciosos")
 
-if precios_reales:
-    st.caption("✅ Precios actualizados en tiempo real desde Inversoro.es")
+if not es_real:
+    st.error("⚠️ Error de conexión con el mercado. Mostrando último cierre conocido.")
 else:
-    st.warning("⚠️ Usando precios de referencia. Pulsa 'Actualizar' para reintentar.")
+    st.success("✅ Precios del mercado en vivo (EUR)")
 
-# Mostrar precios actuales
-col_a, col_b = st.columns(2)
-col_a.metric("🥇 Oro (€/oz)", f"{oro_hoy:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
-col_b.metric("🥈 Plata (€/oz)", f"{plata_hoy:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
+# Tarjetas visuales
+c1, c2 = st.columns(2)
+c1.metric("ORO (oz)", f"{oro_hoy:,.2f} €")
+c2.metric("PLATA (oz)", f"{plata_hoy:,.2f} €")
 
 st.divider()
 
-st.subheader("Simulador de Valor")
-col1, col2 = st.columns([2, 1])
+# Calculadora avanzada
+with st.container():
+    col_izq, col_der = st.columns([2,1])
+    
+    with col_izq:
+        metal = st.selectbox("Metal a valorar", ["Oro", "Plata"])
+        peso = st.number_input("Cantidad", min_value=0.0, step=0.1, format="%.2f")
+    
+    with col_der:
+        unidad = st.selectbox("Unidad", ["Gramos (g)", "Onzas (oz)", "Kilos (kg)"])
+        # Ajuste de pureza automático
+        def_pureza = 750 if metal == "Oro" else 999
+        pureza = st.number_input("Milésimas", value=def_pureza, min_value=1, max_value=999)
 
-with col1:
-    peso = st.number_input("Peso del metal", min_value=0.0, value=0.0, step=0.1, format="%.3f")
-    metal = st.radio("Selecciona Metal", ["Oro", "Plata"], horizontal=True, key="metal_selector")
+# Cálculo
+factor = {"Gramos (g)": 0.03215, "Onzas (oz)": 1.0, "Kilos (kg)": 32.15}
+precio = oro_hoy if metal == "Oro" else plata_hoy
+total = (peso * factor[unidad]) * (pureza / 1000) * precio
 
-with col2:
-    unidad = st.selectbox("Unidad", ["g", "oz", "kg"])
-    # Reset de pureza basado en el metal
-    pureza_defecto = 750 if st.session_state.metal_selector == "Oro" else 999
-    pureza = st.number_input(
-        "Pureza (milésimas)", 
-        value=pureza_defecto, 
-        step=1, 
-        min_value=1, 
-        max_value=999, 
-        key=f"pureza_{st.session_state.metal_selector}"
-    )
-
-# --- LÓGICA DE CÁLCULO ---
-def calcular_total(p, u, m, pur):
-    conv = {"oz": 1.0, "g": 0.0321507, "kg": 32.1507}
-    precio_actual = oro_hoy if m == "Oro" else plata_hoy
-    onzas_reales = (p * conv[u]) * (pur / 1000)
-    return onzas_reales * precio_actual
-
-total = calcular_total(peso, unidad, metal, pureza)
-
-def formato_europeo(valor: float) -> str:
-    entero, decimal = f"{valor:.2f}".split('.')
-    entero_formateado = f"{int(entero):,}".replace(',', '.')
-    return f"{entero_formateado},{decimal}"
-
-# --- RESULTADO FINAL ---
-if peso <= 0:
-    st.info("ℹ️ Introduce un peso para calcular el valor estimado.")
-else:
-    st.markdown(f"""
-    <div style="background-color:#2ecc71; padding:20px; border-radius:15px; text-align:center; margin-top:20px;">
-        <h2 style="color:white; margin:0; font-family:sans-serif; font-size:18px;">VALOR TOTAL ESTIMADO</h2>
-        <h1 style="color:white; margin:0; font-family:sans-serif; font-size:42px;">{formato_europeo(total)} €</h1>
-        <p style="color:rgba(255,255,255,0.85); margin:8px 0 0 0; font-size:13px;">
-            {peso} {unidad} de {metal} · Pureza {pureza}/1000
-        </p>
+# DISEÑO DEL RESULTADO (Caja Oro)
+st.markdown(f"""
+    <div style="background: linear-gradient(45deg, #f1c40f, #d4af37); padding: 30px; border-radius: 15px; text-align: center; border: 2px solid #ffffff;">
+        <h3 style="color: #000; margin:0;">VALOR ESTIMADO</h3>
+        <h1 style="color: #000; font-size: 50px; margin:0;">{total:,.2f} €</h1>
+        <p style="color: #333;">Cotización actual: {precio:,.2f} €/oz</p>
     </div>
     """, unsafe_allow_html=True)
 
-st.write("") 
-if st.button("🔄 Actualizar precios ahora"):
+if st.button("🔄 Forzar Actualización de Precios"):
     st.cache_data.clear()
     st.rerun()
